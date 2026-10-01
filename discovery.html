@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wishlist Discovery Engine</title>
+<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:0 auto;padding:16px;background:#fafafa;color:#1a1a1a}h1{font-size:22px}textarea,button{width:100%;box-sizing:border-box;font-size:16px;padding:10px;border:1px solid #888;border-radius:6px}button{background:#0b5cad;color:#fff;border:0;margin-top:10px;font-weight:600}.row{display:flex;align-items:center;gap:8px;margin:6px 0}.bar{height:18px;background:#0b5cad;border-radius:3px}.lab{width:230px;font-size:15px}.card{background:#fff;border:1px solid #ccc;border-radius:8px;padding:12px;margin-top:14px}small{color:#555}table{border-collapse:collapse;width:100%;font-size:15px}td,th{border:1px solid #ccc;padding:6px;text-align:left}</style></head><body>
+<h1>Wishlist Discovery Engine</h1><small>Paste reviews, Reddit comments, YouTube comments or survey answers (one per line). It tags each with barrier themes, quantifies them, compares segments and ranks opportunities. Prototype, not affiliated with Myntra.</small>
+<textarea id="t" rows="9" placeholder="One comment per line. Optional segment prefix, e.g. [tier2] ..."></textarea>
+<button onclick="run()">Analyse</button> <button style="background:#555" onclick="sample()">Load sample</button>
+<div id="o"></div>
+<script>
+const T={ 'Size / fit uncertainty':/size|fit|runs (small|large)|too (tight|loose|big|small)|measure/i,
+'Waiting for price drop / sale':/sale|discount|price drop|wait(ing)? for|cheaper|offer|coupon/i,
+'Quality vs photos / reviews doubt':/quality|fabric|photo|looks different|review|material|fake|not as shown/i,
+'Comparing alternatives':/compar|other app|amazon|flipkart|ajio|nykaa|similar|alternative/i,
+'Styling / occasion unclear':/occasion|wear with|match|style it|wedding|party|outfit|suit me|look good/i,
+'Out of stock / size unavailable':/out of stock|unavailable|sold out|not available|notify/i,
+'Return / trust worries':/return|refund|exchange|pickup|cod/i,
+'Budget / not now':/budget|salary|afford|later|next month|not now/i,
+'Just bookmarking':/bookmark|just browsing|window shopping|save for ideas|inspiration/i};
+const FIX={'Size / fit uncertainty':'Size-confidence check from own past purchases','Waiting for price drop / sale':'Price-history transparency and decide-by nudge (no money)','Quality vs photos / reviews doubt':'Photo and 3-star review digest','Comparing alternatives':'Side-by-side shortlist compare','Styling / occasion unclear':'Outfit pairing from owned and wishlisted items','Out of stock / size unavailable':'Back-in-stock alert for chosen size','Return / trust worries':'Return-policy clarity at item level','Budget / not now':'Reminder tied to payday-free timing (no incentives)','Just bookmarking':'Auto-archive stale items'};
+const S=["[tier2] Never sure about size, last kurta was too tight and return was a hassle","[metro] I wait for the sale, price dropped 300 after I bought","[tier2] Photos look different from the fabric, I read reviews on YouTube first","[metro] Saved it for a wedding but cannot decide how to style it","[metro] Comparing with Ajio and Amazon for the same jacket","[tier2] Size M out of stock, no notification","[metro] Just bookmarking ideas, window shopping","[tier2] Do not know if it will fit, size chart confusing","[metro] Waiting for end of season sale","[tier2] Worried about return pickup and refund delay"];
+function sample(){t.value=S.join('\n')}
+function run(){const L=t.value.split('\n').map(s=>s.trim()).filter(Boolean);if(!L.length)return;
+const cnt={},seg={};Object.keys(T).forEach(k=>cnt[k]={all:0});let tagged=0;
+L.forEach(l=>{const m=l.match(/^\[(\w+)\]/);const sg=m?m[1]:'all';let any=false;
+ for(const k in T){if(T[k].test(l)){cnt[k].all++;cnt[k][sg]=(cnt[k][sg]||0)+1;seg[sg]=1;any=true}}if(any)tagged++;seg[sg]=1});
+const segs=Object.keys(seg).filter(s=>s!=='all');
+const rows=Object.entries(cnt).map(([k,v])=>({k,n:v.all,p:v.all/L.length,v})).sort((a,b)=>b.n-a.n);
+const max=Math.max(1,rows[0].n);
+let h='<div class="card"><b>'+L.length+' comments, '+tagged+' tagged ('+Math.round(100*tagged/L.length)+'%)</b><br><small>Keyword tagging: a comment can carry several themes. Treat small samples as directional.</small>'+rows.map(r=>'<div class="row"><span class="lab">'+r.k+'</span><div class="bar" style="width:'+Math.round(260*r.n/max)+'px"></div><span>'+r.n+' ('+Math.round(100*r.p)+'%)</span></div>').join('')+'</div>';
+if(segs.length){h+='<div class="card"><b>Segment comparison (count)</b><table><tr><th>Theme</th>'+segs.map(s=>'<th>'+s+'</th>').join('')+'</tr>'+rows.filter(r=>r.n).map(r=>'<tr><td>'+r.k+'</td>'+segs.map(s=>'<td>'+(r.v[s]||0)+'</td>').join('')+'</tr>').join('')+'</table></div>'}
+h+='<div class="card"><b>Opportunity ranking</b><br><small>Score = share of comments x solvability without money (1 to 3).</small><table><tr><th>#</th><th>Barrier</th><th>Share</th><th>Idea (no incentives)</th></tr>'+rows.filter(r=>r.n).map(r=>({...r,s:r.p*(['Size / fit uncertainty','Styling / occasion unclear','Out of stock / size unavailable','Comparing alternatives'].includes(r.k)?3:['Quality vs photos / reviews doubt','Return / trust worries'].includes(r.k)?2:1)})).sort((a,b)=>b.s-a.s).map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+r.k+'</td><td>'+Math.round(100*r.p)+'%</td><td>'+FIX[r.k]+'</td></tr>').join('')+'</table></div>';
+o.innerHTML=h}
+</script></body></html>
