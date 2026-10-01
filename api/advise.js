@@ -1,26 +1,45 @@
-// Vercel serverless function. Works without an API key (rule-based), upgrades to Claude when ANTHROPIC_API_KEY is set.
+// Decision-confidence card: review trust + price timing + decide-by. Rule-based; upgrades to Claude if ANTHROPIC_API_KEY is set.
+const POS=/good|great|nice|perfect|love|soft|worth|true to size|as shown|comfortable|premium|durable/gi;
+const NEG=/bad|poor|cheap|thin|faded|shrunk|torn|fake|not as shown|different|loose|tight|small|large|late|damaged|worst|waste/gi;
+const ASPECT={Fit:/fit|size|tight|loose|small|large|length/i,Quality:/quality|fabric|material|stitch|thin|soft|cheap|durable/i,'Looks vs photos':/photo|picture|image|colour|color|as shown|different/i};
+function reviews(txt){
+  const L=(txt||'').split('\n').map(s=>s.trim()).filter(Boolean); if(!L.length) return null;
+  let pos=0,neg=0; const asp={};
+  L.forEach(l=>{const p=(l.match(POS)||[]).length,n=(l.match(NEG)||[]).length;pos+=p;neg+=n;
+    for(const k in ASPECT){ if(ASPECT[k].test(l)){asp[k]=asp[k]||{p:0,n:0}; if(n>p)asp[k].n++; else asp[k].p++;}}});
+  return {count:L.length,pos,neg,asp};
+}
 function rules(b){
-  const out=[]; const days=Number(b.days||0);
-  const fit=b.knownSize==='yes';
-  if(!fit) out.push({tag:'Fit',text:`Not sure of your size? Compare the garment's chest/waist/length (cm) with one piece you already own and like. If it is within 2 cm, pick the same size.`});
-  else out.push({tag:'Fit',text:'You know your size in this brand: the fit risk is low. Check the "fit" lines in reviews for "runs small/large".'});
-  if(b.reason==='occasion') out.push({tag:'Occasion',text:days>14?'The occasion may be close: delivery plus a return window needs about 7-10 days. Decide this week.':'You have time, but set a decide-by date so the item does not sit for a month.'});
-  if(b.reason==='style') out.push({tag:'Styling',text:'Name 2 outfits you can make with things you already own. If you cannot, the item is probably bookmarking, not buying.'});
-  if(b.reason==='price') out.push({tag:'Price',text:'Check the same item in 2 other apps today, then decide. Waiting without a target price rarely pays off.'});
-  if(b.reason==='reviews') out.push({tag:'Reviews',text:'Read only 3-star and photo reviews: they carry the real fit and fabric information.'});
-  out.push({tag:'Next step',text:days>21?'This has been saved for over 3 weeks. Decide now: buy, or remove it to keep your list clean.':'Pick one: buy now with free returns, or set a decide-by date.'});
-  const score=Math.max(10,Math.min(95,60+(fit?15:-10)+(days>21?-15:5)+(b.reason==='occasion'?10:0)));
-  return {score,verdict:score>=65?'Likely to buy: go for it':score>=45?'Needs one more check':'Probably bookmarking',items:out,mode:'rules'};
+  const out=[]; let score=50; const days=Number(b.days||0);
+  const cur=Number(b.price||0), low=Number(b.lowest||0), high=Number(b.highest||0);
+  const rv=reviews(b.reviews);
+  if(rv){
+    const share=rv.pos+rv.neg? rv.pos/(rv.pos+rv.neg):0.5;
+    score+=Math.round((share-0.5)*40);
+    const bits=Object.entries(rv.asp).map(([k,v])=>`${k}: ${v.p} positive, ${v.n} negative`).join('; ');
+    out.push({tag:'Review trust',text:`Across ${rv.count} pasted reviews, ${Math.round(share*100)}% of opinion words are positive.${bits?' '+bits+'.':''} ${share<0.5?'Mostly negative: read the 1-3 star reviews that include photos before deciding.':'Mostly positive: check that reviewers with your body type or use mention the same.'}`});
+  } else out.push({tag:'Review trust',text:'Paste 5-10 reviews (especially 3-star ones with photos) and I will summarise fit, quality and photo-mismatch signals.'});
+  if(cur&&low){
+    const gap=(cur-low)/low;
+    if(gap<=0.05){score+=15;out.push({tag:'Price timing',text:`Today's price (Rs ${cur}) is within 5% of the lowest you have seen (Rs ${low}). Waiting is unlikely to save much.`});}
+    else {score-=5;out.push({tag:'Price timing',text:`Today's price is ${Math.round(gap*100)}% above the lowest you have seen (Rs ${low}). If you can wait, set a target near Rs ${Math.round(low*1.05)} and a date to stop waiting.`});}
+  } else out.push({tag:'Price timing',text:'Add today\'s price and the lowest price you have seen, and I will tell you whether waiting is worth it.'});
+  if(b.reason==='size') out.push({tag:'Fit',text:'Compare the garment measurements (cm) with a piece you already own and like; within 2 cm, take the same size.'});
+  if(b.reason==='budget') out.push({tag:'Budget',text:'Decide the most you will spend and the date by which you need it. If the price is above that, remove the item to keep the list honest.'});
+  if(b.reason==='compare') out.push({tag:'Compare',text:'Open the 2 closest alternatives and compare price, rating and return window side by side before you decide.'});
+  if(b.reason==='occasion') out.push({tag:'Occasion',text:'Delivery plus the return window needs 7-10 days. Count back from the event date.'});
+  if(days>21){score-=10;out.push({tag:'Decide-by',text:`Saved ${days} days ago. Pick one: buy this week, or remove it.`});} else out.push({tag:'Decide-by',text:'Set a decide-by date within 14 days so it does not become a bookmark.'});
+  score=Math.max(5,Math.min(95,score));
+  return {score,verdict:score>=65?'Looks safe to buy':score>=45?'One more check needed':'Hold off or remove',items:out,mode:'rules'};
 }
 export default async function handler(req,res){
   if(req.method!=='POST') return res.status(405).json({error:'POST only'});
-  const b=req.body||{}; const base=rules(b);
-  const key=process.env.ANTHROPIC_API_KEY;
+  const b=req.body||{}; const base=rules(b); const key=process.env.ANTHROPIC_API_KEY;
   if(!key) return res.status(200).json(base);
   try{
     const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:500,messages:[{role:'user',content:`You help a fashion shopper decide on a wishlisted item. No discounts or money offers allowed. Item: ${b.item}. Saved ${b.days} days ago. Main reason saved: ${b.reason}. Knows size: ${b.knownSize}. Notes: ${b.notes||'none'}. Reply with strict JSON {"verdict":"...","items":[{"tag":"Fit|Styling|Occasion|Price|Next step","text":"one sentence"}]} with 3-4 items.`}]})});
-    const j=await r.json(); const t=j.content?.[0]?.text||''; const parsed=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
-    return res.status(200).json({...base,verdict:parsed.verdict||base.verdict,items:parsed.items||base.items,mode:'ai'});
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,messages:[{role:'user',content:`Help a shopper decide on a wishlisted fashion item. Never suggest discounts or money offers. Item: ${b.item}. Saved ${b.days} days ago. Blocker: ${b.reason}. Price now ${b.price}, lowest seen ${b.lowest}. Reviews:\n${b.reviews||'none'}\nReply strict JSON {"verdict":"...","items":[{"tag":"Review trust|Price timing|Fit|Decide-by","text":"one or two sentences"}]}`}]})});
+    const j=await r.json(); const t=j.content?.[0]?.text||''; const p=JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
+    return res.status(200).json({...base,verdict:p.verdict||base.verdict,items:p.items||base.items,mode:'ai'});
   }catch(e){return res.status(200).json(base);}
 }
