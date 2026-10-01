@@ -1,0 +1,18 @@
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Check secret
+        run: test -n "${{ secrets.VERCEL_TOKEN }}" || (echo "VERCEL_TOKEN missing" && exit 1)
+      - name: Deploy to Vercel
+        run: |
+          npx vercel@latest deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}" --name myntra-wishlist-nudge | tee out.txt
+          echo "URL: $(tail -1 out.txt)"
